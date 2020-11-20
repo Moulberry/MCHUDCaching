@@ -1,6 +1,7 @@
 package io.github.moulberry.hudcaching.mixins;
 
 import io.github.moulberry.hudcaching.HUDCaching;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.shader.Framebuffer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -12,7 +13,9 @@ public class MixinFrameBuffer {
 
     @Inject(method="bindFramebuffer", at=@At("HEAD"), cancellable = true)
     public void bindFramebuffer(boolean viewport, CallbackInfo ci) {
-        if(HUDCaching.overrideFramebuffer) {
+        Framebuffer $this = (Framebuffer)(Object)this;
+        if(HUDCaching.renderingCacheOverride && $this == Minecraft.getMinecraft().getFramebuffer()) {
+            HUDCaching.framebuffer.bindFramebuffer(viewport);
             ci.cancel();
         }
     }
