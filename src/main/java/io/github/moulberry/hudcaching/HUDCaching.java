@@ -1,5 +1,6 @@
 package io.github.moulberry.hudcaching;
 
+import io.github.moulberry.hudcaching.asm.interfaces.IGuiIngameForgeListener;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiIngame;
@@ -16,6 +17,7 @@ import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.client.GuiIngameForge;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.entity.player.ItemTooltipEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.Mod.EventHandler;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
@@ -38,10 +40,6 @@ public class HUDCaching {
 
     public static Framebuffer framebuffer = null;
     public static boolean renderingCacheOverride = false;
-
-    public static long lastReflectAttempt = 0;
-    public static Method renderVignetteMethod = null;
-    public static Method renderCrosshairMethod = null;
 
     @EventHandler
     public void preinit(FMLPreInitializationEvent event) {
@@ -66,7 +64,7 @@ public class HUDCaching {
     public void onTick(TickEvent.ClientTickEvent event) {
         boolean n = Keyboard.isKeyDown(Keyboard.KEY_N);
         boolean m = Keyboard.isKeyDown(Keyboard.KEY_M);
-        if(!lastKey) {
+        if(!lastKey && Minecraft.getMinecraft().currentScreen == null) {
             if(n) {
                 doOptimization = !doOptimization;
                 Minecraft.getMinecraft().thePlayer.addChatMessage(new ChatComponentText("Cache Optimization: " + doOptimization));
@@ -81,6 +79,11 @@ public class HUDCaching {
         rendersThisTick = 0;
     }
 
+    public static void setupGlState() {
+        GlStateManager.color(1, 1, 1, 1);
+        GlStateManager.enableBlend();
+    }
+
     public static void renderCachedHud(EntityRenderer entityRenderer, GuiIngame guiIngame, float partialTicks) {
         if(!OpenGlHelper.isFramebufferEnabled() || !doOptimization) {
             guiIngame.renderGameOverlay(partialTicks);
@@ -92,37 +95,10 @@ public class HUDCaching {
             double heightD = scaledResolution.getScaledHeight_double();
 
             entityRenderer.setupOverlayRendering();
+            GlStateManager.enableBlend();
 
-            long currentTime = System.currentTimeMillis();
-
-            if(currentTime - lastReflectAttempt > 5000) {
-                lastReflectAttempt = currentTime;
-                if(renderVignetteMethod == null) {
-                    try {
-                        renderVignetteMethod = GuiIngame.class.getDeclaredMethod("renderVignette", float.class, ScaledResolution.class);
-                    } catch(Exception ignored) {
-                        ignored.printStackTrace();
-                    }
-                }
-                if(renderCrosshairMethod == null) {
-                    try {
-                        renderCrosshairMethod = GuiIngameForge.class.getDeclaredMethod("renderCrosshairs", int.class, int.class);
-                    } catch(Exception ignored) {
-                        ignored.printStackTrace();
-                    }
-                }
-            }
-
-            if(Minecraft.isFancyGraphicsEnabled() && renderVignetteMethod != null) {
-                try {
-                    renderVignetteMethod.setAccessible(true);
-                    GlStateManager.enableBlend();
-                    renderVignetteMethod.invoke(guiIngame, Minecraft.getMinecraft().thePlayer.getBrightness(partialTicks),
-                            scaledResolution);
-                } catch(Exception ignored) {
-                    ignored.printStackTrace();
-                }
-            }
+            guiIngame.renderVignette(Minecraft.getMinecraft().thePlayer.getBrightness(partialTicks),
+                    scaledResolution);
 
             if(framebuffer == null || (cacheTimeMilliticks >= 1000 && tickCounter <= 0) ||
                     (cacheTimeMilliticks < 1000 && partialTicks*1000 > rendersThisTick*cacheTimeMilliticks)) {
@@ -149,49 +125,43 @@ public class HUDCaching {
             }
 
             if(guiIngame instanceof GuiIngameForge) {
-                if(renderCrosshairMethod != null) {
-                    try {
-                        renderCrosshairMethod.setAccessible(true);
-                        renderCrosshairMethod.invoke(guiIngame, width, height);
-                    } catch(Exception ignored) {
-                        ignored.printStackTrace();
-                    }
-                }
-            } else if(showCrosshair()) {
+                ((IGuiIngameForgeListener)guiIngame).renderCrosshairs(width, height);
+            } else if(guiIngame.showCrosshair()) {
                 Minecraft.getMinecraft().getTextureManager().bindTexture(Gui.icons);
                 GlStateManager.enableBlend();
                 GlStateManager.tryBlendFuncSeparate(GL11.GL_ONE_MINUS_DST_COLOR, GL11.GL_ONE_MINUS_SRC_COLOR, 1, 0);
                 GlStateManager.enableAlpha();
-                drawTexturedModalRect((int)width / 2 - 7, (int)height / 2 - 7, 0, 0, 16, 16);
+                drawTexturedModalRect(width/2 - 7, height/2 - 7, 0, 0, 16, 16);
                 GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
             }
 
             if(guiIngame instanceof GuiIngameForge && compatibilityMode) {
-                RenderGameOverlayEvent parent = new RenderGameOverlayEvent(partialTicks, scaledResolution);
-                if(!pre(parent, ALL)) {
-                    if(GuiIngameForge.renderHelmet && !pre(parent, HELMET)) post(parent, HELMET);
-                    if(GuiIngameForge.renderPortal && !pre(parent, PORTAL)) post(parent, PORTAL);
-                    if(GuiIngameForge.renderHotbar && !pre(parent, HOTBAR)) post(parent, HOTBAR);
-                    if(GuiIngameForge.renderCrosshairs && !pre(parent, CROSSHAIRS)) post(parent, CROSSHAIRS);
-                    if(GuiIngameForge.renderBossHealth && !pre(parent, BOSSHEALTH)) post(parent, BOSSHEALTH);
+                GuiIngameForge guiIngameForge = (GuiIngameForge) guiIngame;
+
+                if(!pre(guiIngameForge, ALL)) {
+                    if(GuiIngameForge.renderHelmet && !pre(guiIngameForge, HELMET)) post(guiIngameForge, HELMET);
+                    if(GuiIngameForge.renderPortal && !pre(guiIngameForge, PORTAL)) post(guiIngameForge, PORTAL);
+                    if(GuiIngameForge.renderHotbar && !pre(guiIngameForge, HOTBAR)) post(guiIngameForge, HOTBAR);
+                    if(GuiIngameForge.renderCrosshairs && !pre(guiIngameForge, CROSSHAIRS)) post(guiIngameForge, CROSSHAIRS);
+                    if(GuiIngameForge.renderBossHealth && !pre(guiIngameForge, BOSSHEALTH)) post(guiIngameForge, BOSSHEALTH);
 
                     if (Minecraft.getMinecraft().playerController.shouldDrawHUD() &&
                             Minecraft.getMinecraft().getRenderViewEntity() instanceof EntityPlayer) {
-                        if(GuiIngameForge.renderHealth && !pre(parent, HEALTH)) post(parent, HEALTH);
-                        if(GuiIngameForge.renderArmor && !pre(parent, ARMOR)) post(parent, ARMOR);
-                        if(GuiIngameForge.renderFood && !pre(parent, FOOD)) post(parent, FOOD);
-                        if(GuiIngameForge.renderHealthMount && !pre(parent, HEALTHMOUNT)) post(parent, HEALTHMOUNT);
-                        if(GuiIngameForge.renderAir && !pre(parent, AIR)) post(parent, AIR);
+                        if(GuiIngameForge.renderHealth && !pre(guiIngameForge, HEALTH)) post(guiIngameForge, HEALTH);
+                        if(GuiIngameForge.renderArmor && !pre(guiIngameForge, ARMOR)) post(guiIngameForge, ARMOR);
+                        if(GuiIngameForge.renderFood && !pre(guiIngameForge, FOOD)) post(guiIngameForge, FOOD);
+                        if(GuiIngameForge.renderHealthMount && !pre(guiIngameForge, HEALTHMOUNT)) post(guiIngameForge, HEALTHMOUNT);
+                        if(GuiIngameForge.renderAir && !pre(guiIngameForge, AIR)) post(guiIngameForge, AIR);
                     }
 
-                    if(GuiIngameForge.renderJumpBar && !pre(parent, JUMPBAR)) post(parent, JUMPBAR);
-                    if(GuiIngameForge.renderExperiance && !pre(parent, EXPERIENCE)) post(parent, EXPERIENCE);
-                    if(!pre(parent, DEBUG)) post(parent, DEBUG);
-                    if(!pre(parent, TEXT)) post(parent, TEXT);
-                    if(!pre(parent, CHAT)) post(parent, CHAT);
-                    if(!pre(parent, PLAYER_LIST)) post(parent, PLAYER_LIST);
+                    if(GuiIngameForge.renderJumpBar && !pre(guiIngameForge, JUMPBAR)) post(guiIngameForge, JUMPBAR);
+                    if(GuiIngameForge.renderExperiance && !pre(guiIngameForge, EXPERIENCE)) post(guiIngameForge, EXPERIENCE);
+                    if(!pre(guiIngameForge, DEBUG)) post(guiIngameForge, DEBUG);
+                    if(!pre(guiIngameForge, TEXT)) post(guiIngameForge, TEXT);
+                    if(!pre(guiIngameForge, CHAT)) post(guiIngameForge, CHAT);
+                    if(!pre(guiIngameForge, PLAYER_LIST)) post(guiIngameForge, PLAYER_LIST);
 
-                    post(parent, ALL);
+                    post(guiIngameForge, ALL);
                 }
             }
 
@@ -200,36 +170,14 @@ public class HUDCaching {
         }
     }
 
-    private static boolean pre(RenderGameOverlayEvent parent, RenderGameOverlayEvent.ElementType type)
-    {
-        return MinecraftForge.EVENT_BUS.post(new RenderGameOverlayEvent.Pre(parent, type));
+    private static boolean pre(GuiIngameForge guiIngameForge, RenderGameOverlayEvent.ElementType type) {
+        setupGlState();
+        return ((IGuiIngameForgeListener)guiIngameForge).pre(type);
     }
-    private static void post(RenderGameOverlayEvent parent, RenderGameOverlayEvent.ElementType type)
-    {
-        MinecraftForge.EVENT_BUS.post(new RenderGameOverlayEvent.Post(parent, type));
+    private static void post(GuiIngameForge guiIngameForge, RenderGameOverlayEvent.ElementType type) {
+        ((IGuiIngameForgeListener)guiIngameForge).post(type);
     }
 
-    protected static boolean showCrosshair() {
-        Minecraft mc = Minecraft.getMinecraft();
-        if (mc.gameSettings.showDebugInfo && !mc.thePlayer.hasReducedDebug() && !mc.gameSettings.reducedDebugInfo) {
-            return false;
-        } else if (mc.playerController.isSpectator()) {
-            if (mc.pointedEntity != null) {
-                return true;
-            } else {
-                if (mc.objectMouseOver != null && mc.objectMouseOver.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) {
-                    BlockPos blockpos = mc.objectMouseOver.getBlockPos();
-
-                    if (mc.theWorld.getTileEntity(blockpos) instanceof IInventory) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-        } else {
-            return true;
-        }
-    }
     private static void drawTexturedModalRect(int x, int y, int textureX, int textureY, int width, int height) {
         float f = 0.00390625F;
         float f1 = 0.00390625F;
@@ -246,7 +194,7 @@ public class HUDCaching {
     private static Framebuffer checkFramebufferSizes(Framebuffer framebuffer, int width, int height) {
         if(framebuffer == null || framebuffer.framebufferWidth != width || framebuffer.framebufferHeight != height) {
             if(framebuffer == null) {
-                framebuffer = new Framebuffer(width, height, false);
+                framebuffer = new Framebuffer(width, height, true);
             } else {
                 framebuffer.createBindFramebuffer(width, height);
             }
