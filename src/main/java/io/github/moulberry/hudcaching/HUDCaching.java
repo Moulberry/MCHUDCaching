@@ -51,12 +51,12 @@ public class HUDCaching {
     //2500 will also render every 2 ticks
     //333 will render (up to) 3 times every tick
     //100 will render (up to) 10 times every tick
-    private static int cacheTimeMilliticks = 1000;
+    private static int cacheTimeMilliticks = 1000; //CHANGE THIS IN CONFIG
     private static int tickCounter = 0;
     private static int rendersThisTick = 0;
 
-    public static boolean doOptimization = true;
-    public static boolean compatibilityMode = false;
+    public static boolean doOptimization = true; //CHANGE THIS IN CONFIG
+    public static boolean compatibilityMode = false; //MAYBE CHANGE THIS IS CONFIG, NOT SURE IF ITS GOOD OR NOT
 
     private boolean lastKey = false;
 
