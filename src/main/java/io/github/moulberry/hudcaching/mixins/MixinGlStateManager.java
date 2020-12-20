@@ -12,48 +12,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(GlStateManager.class)
 public class MixinGlStateManager {
 
-    private static int srcFactor = 770;
-    private static int dstFactor = 771;
-    private static boolean wantBlend = true;
-
-    @Inject(method="enableBlend", at=@At("HEAD"), cancellable = true)
-    private static void enableBlend(CallbackInfo ci) {
-        wantBlend = true;
-        if(HUDCaching.renderingCacheOverride && srcFactor == 770 && dstFactor == 771) {
-            ci.cancel();
-        }
-    }
-
-    @Inject(method="disableBlend", at=@At("HEAD"))
-    private static void disableBlend(CallbackInfo ci) {
-        wantBlend = false;
-    }
-
     @Inject(method="blendFunc", at=@At("RETURN"))
     private static void blendFunc(int srcFactor, int dstFactor, CallbackInfo ci) {
-        MixinGlStateManager.srcFactor = srcFactor;
-        MixinGlStateManager.dstFactor = dstFactor;
-
-        if(srcFactor != 770 || dstFactor != 771) {
-            if(wantBlend) {
-                GlStateManager.enableBlend();
-            } else {
-                GlStateManager.disableBlend();
-            }
-        }
+        GlStateManager.tryBlendFuncSeparate(srcFactor, dstFactor, srcFactor, GL11.GL_ONE_MINUS_SRC_ALPHA);
     }
 
     @Inject(method="tryBlendFuncSeparate", at=@At("RETURN"))
     private static void tryBlendFuncSeparate(int srcFactor, int dstFactor, int srcFactorAlpha, int dstFactorAlpha, CallbackInfo ci) {
-        MixinGlStateManager.srcFactor = srcFactor;
-        MixinGlStateManager.dstFactor = dstFactor;
-
-        if(srcFactor != 770 || dstFactor != 771) {
-            if(wantBlend) {
-                GlStateManager.enableBlend();
-            } else {
-                GlStateManager.disableBlend();
-            }
+        if(dstFactorAlpha != GL11.GL_ONE_MINUS_SRC_ALPHA) {
+            GlStateManager.tryBlendFuncSeparate(srcFactor, dstFactor, srcFactorAlpha, GL11.GL_ONE_MINUS_SRC_ALPHA);
         }
     }
 
