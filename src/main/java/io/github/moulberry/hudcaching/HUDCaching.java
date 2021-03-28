@@ -128,6 +128,7 @@ public class HUDCaching {
                 drawTexturedRect(0, 0, (float)widthD, (float)heightD, 0, 1, 1, 0, GL11.GL_NEAREST);
                 GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
 
+                GlStateManager.disableDepth();
                 if(guiIngame instanceof GuiIngameForge) {
                     ((IGuiIngameForgeListener)guiIngame).renderCrosshairs(width, height);
                 } else if(guiIngame.showCrosshair()) {
@@ -135,9 +136,10 @@ public class HUDCaching {
                     GlStateManager.enableBlend();
                     GlStateManager.tryBlendFuncSeparate(GL11.GL_ONE_MINUS_DST_COLOR, GL11.GL_ONE_MINUS_SRC_COLOR, 1, 0);
                     GlStateManager.enableAlpha();
-                    drawTexturedModalRect(width/2 - 7, height/2 - 7, 0, 0, 16, 16);
+                    drawTexturedModalRect(width / 2 - 7, height / 2 - 7, 0, 0, 16, 16);
                     GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
                 }
+                GlStateManager.enableDepth();
             }
 
             if((framebuffer == null || dirty) && !Keyboard.isKeyDown(Keyboard.KEY_P)) {
