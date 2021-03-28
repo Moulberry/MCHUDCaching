@@ -18,11 +18,4 @@ public class MixinGuiIngameForge {
         }
     }
 
-    @Inject(method="pre", at=@At("HEAD"), cancellable = true, remap = false)
-    public void pre(CallbackInfoReturnable<Boolean> cir) {
-        if(HUDCaching.renderingCacheOverride && HUDCaching.compatibilityMode) {
-            cir.setReturnValue(false);
-        }
-    }
-
 }

@@ -8,12 +8,12 @@ import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.*;
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
 import net.minecraft.client.shader.Framebuffer;
+import net.minecraft.command.CommandHandler;
+import net.minecraft.command.ICommandSender;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.inventory.IInventory;
-import net.minecraft.util.BlockPos;
-import net.minecraft.util.ChatComponentText;
-import net.minecraft.util.MovingObjectPosition;
-import net.minecraft.util.ResourceLocation;
+import net.minecraft.util.*;
+import net.minecraftforge.client.ClientCommandHandler;
 import net.minecraftforge.client.GuiIngameForge;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.common.MinecraftForge;
@@ -30,13 +30,14 @@ import org.lwjgl.opengl.GL14;
 import static net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.*;
 
 import java.lang.reflect.Method;
+import java.nio.ByteBuffer;
 
 import static net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.CROSSHAIRS;
 
 @Mod(modid = HUDCaching.MODID, version = HUDCaching.VERSION, clientSideOnly = true)
 public class HUDCaching {
     public static final String MODID = "hudcaching";
-    public static final String VERSION = "1.0-REL";
+    public static final String VERSION = "1.7-REL";
 
     public static Framebuffer framebuffer = null;
     public static boolean renderingCacheOverride = false;
@@ -51,37 +52,56 @@ public class HUDCaching {
     //2500 will also render every 2 ticks
     //333 will render (up to) 3 times every tick
     //100 will render (up to) 10 times every tick
-    private static int cacheTimeMilliticks = 1000; //CHANGE THIS IN CONFIG
-    private static int tickCounter = 0;
-    private static int rendersThisTick = 0;
+    //private static int cacheTimeMilliticks = 20000; //CHANGE THIS IN CONFIG
+    //private static int tickCounter = 0;
+    //private static int rendersThisTick = 0;
+    private static boolean dirty = true;
 
     public static boolean doOptimization = true; //CHANGE THIS IN CONFIG
     public static boolean compatibilityMode = false; //MAYBE CHANGE THIS IS CONFIG, NOT SURE IF ITS GOOD OR NOT
 
-    private boolean lastKey = false;
+    SimpleCommand hudcachingCommand = new SimpleCommand("hudcaching", new SimpleCommand.ProcessCommandRunnable() {
+        @Override
+        public void processCommand(ICommandSender sender, String[] args) {
+            if(args.length != 1) {
+                sender.addChatMessage(new ChatComponentText(EnumChatFormatting.RED+
+                        "Invalid argument count. Usage: /hudcaching (on/off)"));
+            } else {
+                if(args[0].equalsIgnoreCase("on")) {
+                    doOptimization = true;
+                    sender.addChatMessage(new ChatComponentText(EnumChatFormatting.GREEN+
+                            "HudCaching enabled. HUD framerate is now limited to: 20"));
+                } else if(args[0].equalsIgnoreCase("off")) {
+                    doOptimization = false;
+                    sender.addChatMessage(new ChatComponentText(EnumChatFormatting.YELLOW+
+                            "HudCaching disabled. HUD framerate is now limited to: NO LIMIT"));
+                } else {
+                    sender.addChatMessage(new ChatComponentText(EnumChatFormatting.RED+
+                            "Unknown argument: "+args[0]+". Usage: /hudcaching (on/off)"));
+
+                }
+            }
+        }
+    });
+
+    @EventHandler
+    public void onPreInit(FMLPreInitializationEvent event) {
+        ClientCommandHandler.instance.registerCommand(hudcachingCommand);
+    }
 
     @SubscribeEvent
     public void onTick(TickEvent.ClientTickEvent event) {
-        boolean n = Keyboard.isKeyDown(Keyboard.KEY_N);
-        boolean m = Keyboard.isKeyDown(Keyboard.KEY_M);
-        if(!lastKey && Minecraft.getMinecraft().currentScreen == null) {
-            if(n) {
-                doOptimization = !doOptimization;
-                Minecraft.getMinecraft().thePlayer.addChatMessage(new ChatComponentText("Cache Optimization: " + doOptimization));
-            } else if(m) {
-                compatibilityMode = !compatibilityMode;
-                Minecraft.getMinecraft().thePlayer.addChatMessage(new ChatComponentText("Compatibility: " + compatibilityMode));
+        if(event.phase == TickEvent.Phase.END && doOptimization) {
+            if(!OpenGlHelper.isFramebufferEnabled() && Minecraft.getMinecraft().thePlayer != null) {
+                Minecraft.getMinecraft().thePlayer.addChatMessage(new ChatComponentText(EnumChatFormatting.RED+
+                        "Framebuffers disabled, HudCaching will not work. Disabling...\n"+EnumChatFormatting.RED+
+                        "Please disable ESC > Options > Video Settings > Performance > Fast Render\n"+EnumChatFormatting.RED+
+                        "If issue still persists, contact support at https://discord.gg/moulberry"));
+                doOptimization = false;
+            } else {
+                dirty = true;
             }
         }
-        lastKey = n || m;
-
-        tickCounter--;
-        rendersThisTick = 0;
-    }
-
-    public static void setupGlState() {
-        GlStateManager.color(1, 1, 1, 1);
-        GlStateManager.enableBlend();
     }
 
     public static void renderCachedHud(EntityRenderer entityRenderer, GuiIngame guiIngame, float partialTicks) {
@@ -97,13 +117,31 @@ public class HUDCaching {
             entityRenderer.setupOverlayRendering();
             GlStateManager.enableBlend();
 
-            guiIngame.renderVignette(Minecraft.getMinecraft().thePlayer.getBrightness(partialTicks),
-                    scaledResolution);
+            //guiIngame.renderVignette(Minecraft.getMinecraft().thePlayer.getBrightness(partialTicks),
+            //        scaledResolution);
 
-            if(framebuffer == null || (cacheTimeMilliticks >= 1000 && tickCounter <= 0) ||
-                    (cacheTimeMilliticks < 1000 && partialTicks*1000 > rendersThisTick*cacheTimeMilliticks)) {
-                tickCounter = cacheTimeMilliticks/1000;
-                rendersThisTick++;
+            if(framebuffer != null) {
+                framebuffer.bindFramebufferTexture();
+
+                GlStateManager.enableBlend();
+                GlStateManager.tryBlendFuncSeparate(GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA, GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                drawTexturedRect(0, 0, (float)widthD, (float)heightD, 0, 1, 1, 0, GL11.GL_NEAREST);
+                GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
+
+                if(guiIngame instanceof GuiIngameForge) {
+                    ((IGuiIngameForgeListener)guiIngame).renderCrosshairs(width, height);
+                } else if(guiIngame.showCrosshair()) {
+                    Minecraft.getMinecraft().getTextureManager().bindTexture(Gui.icons);
+                    GlStateManager.enableBlend();
+                    GlStateManager.tryBlendFuncSeparate(GL11.GL_ONE_MINUS_DST_COLOR, GL11.GL_ONE_MINUS_SRC_COLOR, 1, 0);
+                    GlStateManager.enableAlpha();
+                    drawTexturedModalRect(width/2 - 7, height/2 - 7, 0, 0, 16, 16);
+                    GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
+                }
+            }
+
+            if((framebuffer == null || dirty) && !Keyboard.isKeyDown(Keyboard.KEY_P)) {
+                dirty = false;
 
                 framebuffer = checkFramebufferSizes(framebuffer, Minecraft.getMinecraft().displayWidth,
                         Minecraft.getMinecraft().displayHeight);
@@ -124,63 +162,7 @@ public class HUDCaching {
                 Minecraft.getMinecraft().getFramebuffer().bindFramebuffer(false);
                 GlStateManager.enableBlend();
             }
-
-            if(guiIngame instanceof GuiIngameForge) {
-                ((IGuiIngameForgeListener)guiIngame).renderCrosshairs(width, height);
-            } else if(guiIngame.showCrosshair()) {
-                Minecraft.getMinecraft().getTextureManager().bindTexture(Gui.icons);
-                GlStateManager.enableBlend();
-                GlStateManager.tryBlendFuncSeparate(GL11.GL_ONE_MINUS_DST_COLOR, GL11.GL_ONE_MINUS_SRC_COLOR, 1, 0);
-                GlStateManager.enableAlpha();
-                drawTexturedModalRect(width/2 - 7, height/2 - 7, 0, 0, 16, 16);
-                GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
-            }
-
-            if(guiIngame instanceof GuiIngameForge && compatibilityMode) {
-                GuiIngameForge guiIngameForge = (GuiIngameForge) guiIngame;
-
-                if(!pre(guiIngameForge, ALL)) {
-                    if(GuiIngameForge.renderHelmet && !pre(guiIngameForge, HELMET)) post(guiIngameForge, HELMET);
-                    if(GuiIngameForge.renderPortal && !pre(guiIngameForge, PORTAL)) post(guiIngameForge, PORTAL);
-                    if(GuiIngameForge.renderHotbar && !pre(guiIngameForge, HOTBAR)) post(guiIngameForge, HOTBAR);
-                    if(GuiIngameForge.renderCrosshairs && !pre(guiIngameForge, CROSSHAIRS)) post(guiIngameForge, CROSSHAIRS);
-                    if(GuiIngameForge.renderBossHealth && !pre(guiIngameForge, BOSSHEALTH)) post(guiIngameForge, BOSSHEALTH);
-
-                    if (Minecraft.getMinecraft().playerController.shouldDrawHUD() &&
-                            Minecraft.getMinecraft().getRenderViewEntity() instanceof EntityPlayer) {
-                        if(GuiIngameForge.renderHealth && !pre(guiIngameForge, HEALTH)) post(guiIngameForge, HEALTH);
-                        if(GuiIngameForge.renderArmor && !pre(guiIngameForge, ARMOR)) post(guiIngameForge, ARMOR);
-                        if(GuiIngameForge.renderFood && !pre(guiIngameForge, FOOD)) post(guiIngameForge, FOOD);
-                        if(GuiIngameForge.renderHealthMount && !pre(guiIngameForge, HEALTHMOUNT)) post(guiIngameForge, HEALTHMOUNT);
-                        if(GuiIngameForge.renderAir && !pre(guiIngameForge, AIR)) post(guiIngameForge, AIR);
-                    }
-
-                    if(GuiIngameForge.renderJumpBar && !pre(guiIngameForge, JUMPBAR)) post(guiIngameForge, JUMPBAR);
-                    if(GuiIngameForge.renderExperiance && !pre(guiIngameForge, EXPERIENCE)) post(guiIngameForge, EXPERIENCE);
-                    if(!pre(guiIngameForge, DEBUG)) post(guiIngameForge, DEBUG);
-                    if(!pre(guiIngameForge, TEXT)) post(guiIngameForge, TEXT);
-                    if(!pre(guiIngameForge, CHAT)) post(guiIngameForge, CHAT);
-                    if(!pre(guiIngameForge, PLAYER_LIST)) post(guiIngameForge, PLAYER_LIST);
-
-                    post(guiIngameForge, ALL);
-                }
-            }
-
-            framebuffer.bindFramebufferTexture();
-
-            GlStateManager.enableBlend();
-            GlStateManager.blendFunc(GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
-            drawTexturedRect(0, 0, (float)widthD, (float)heightD, 0, 1, 1, 0, GL11.GL_NEAREST);
-            GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
         }
-    }
-
-    private static boolean pre(GuiIngameForge guiIngameForge, RenderGameOverlayEvent.ElementType type) {
-        setupGlState();
-        return ((IGuiIngameForgeListener)guiIngameForge).pre(type);
-    }
-    private static void post(GuiIngameForge guiIngameForge, RenderGameOverlayEvent.ElementType type) {
-        ((IGuiIngameForgeListener)guiIngameForge).post(type);
     }
 
     private static void drawTexturedModalRect(int x, int y, int textureX, int textureY, int width, int height) {
