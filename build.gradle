@@ -1,12 +1,16 @@
 buildscript {
     repositories {
         jcenter()
+        maven {
+            name 'JitPack'
+            url 'https://jitpack.io'
+        }
         maven { url = "https://files.minecraftforge.net/maven" }
         maven { url = "https://repo.spongepowered.org/maven" }
     }
     dependencies {
-        classpath 'net.minecraftforge.gradle:ForgeGradle:2.1-SNAPSHOT'
-        classpath 'org.spongepowered:mixingradle:0.6-SNAPSHOT'
+        classpath "com.github.asbyth:ForgeGradle:86b2392"
+        classpath 'com.github.LxGaming:MixinGradle:0.6-SNAPSHOT'
         classpath 'com.github.jengelman.gradle.plugins:shadow:4.0.4'
     }
 }
@@ -34,13 +38,11 @@ minecraft {
 repositories {
     jcenter()
     maven { url 'https://repo.spongepowered.org/maven/' }
-	flatDir {
-		dirs 'deps'
-	}
 }
 
 dependencies {
     compile('org.spongepowered:mixin:0.7.11-SNAPSHOT')
+    annotationProcessor('org.spongepowered:mixin:0.7.11-SNAPSHOT')
 }
 
 mixin {
@@ -52,7 +54,6 @@ jar {
 		'TweakClass': 'org.spongepowered.asm.launch.MixinTweaker',
 		'MixinConfigs': "mixins.${modid}.json",
 		'FMLCorePluginContainsFMLMod': true,
-        "FMLCorePlugin": "io.github.moulberry.hudcaching.forge.HCTweaker",
 		"ForceLoadAsMod": true,
         "FMLAT": 'hudcaching_at.cfg'
     )
@@ -62,7 +63,7 @@ shadowJar {
 	dependencies {
 		include(dependency('org.spongepowered:mixin:0.7.11-SNAPSHOT'))
     }
-	
+
 	exclude 'module-info.class'
     exclude 'dummyThing'
     exclude 'LICENSE.txt'
@@ -71,17 +72,8 @@ shadowJar {
 }
 
 reobf {
-	shadowJar { 
-		mappingType = 'SEARGE' 
-	}
-}
-
-
-task runClientFix {
-	doLast {
-		String fileName = "${archivesBaseName}-${version}-${mixinClassifier}.jar"
-		ant.move file: "${buildDir}/libs/${fileName}", tofile: "${projectDir}/run/mods/${fileName}"
-		ant.delete file: "${buildDir}/libs/${archivesBaseName}-${version}.jar"
+	shadowJar {
+		mappingType = 'SEARGE'
 	}
 }
 
@@ -91,10 +83,8 @@ runClient {
 
 build.dependsOn(shadowJar)
 runClient.dependsOn(build)
-runClient.dependsOn(runClientFix)
 
-processResources
-{
+processResources {
     inputs.property "version", project.version
     inputs.property "mcversion", project.minecraft.version
 
@@ -102,10 +92,19 @@ processResources
         include 'mcmod.info'
         expand 'version':project.version, 'mcversion':project.minecraft.version
     }
-        
+
     from(sourceSets.main.resources.srcDirs) {
         exclude 'mcmod.info'
     }
 
     rename '(.+_at.cfg)', 'META-INF/$1'
 }
+
+task moveResources {
+    doLast {
+        ant.move file: "${buildDir}/resources/main",
+                todir: "${buildDir}/classes/java"
+    }
+}
+moveResources.dependsOn processResources
+classes.dependsOn moveResources

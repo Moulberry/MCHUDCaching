@@ -15,7 +15,7 @@ public class MixinFrameBuffer {
     public void bindFramebuffer(boolean viewport, CallbackInfo ci) {
         Framebuffer $this = (Framebuffer)(Object)this;
         if(HUDCaching.renderingCacheOverride && $this == Minecraft.getMinecraft().getFramebuffer()) {
-            HUDCaching.framebuffer.bindFramebuffer(viewport);
+            HUDCaching.getCurrentBuffer().bindFramebuffer(viewport);
             ci.cancel();
         }
     }

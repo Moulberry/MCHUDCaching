@@ -7,6 +7,9 @@
     "MixinFrameBuffer",
     "MixinGlStateManager",
     "MixinGuiIngame",
-    "MixinGuiIngameForge"
+    "MixinGuiIngameForge",
+    "MixinWorldClient",
+    "GuiIngameForgeInvoker",
+    "MixinRender"
   ]
 }

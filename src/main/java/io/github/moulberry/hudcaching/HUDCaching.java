@@ -1,23 +1,22 @@
 package io.github.moulberry.hudcaching;
 
-import io.github.moulberry.hudcaching.asm.interfaces.IGuiIngameForgeListener;
+import io.github.moulberry.hudcaching.entityculling.EntityCulling;
+import io.github.moulberry.hudcaching.mixins.GuiIngameForgeInvoker;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiIngame;
 import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.*;
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
 import net.minecraft.client.shader.Framebuffer;
-import net.minecraft.command.CommandHandler;
 import net.minecraft.command.ICommandSender;
-import net.minecraft.entity.player.EntityPlayer;
-import net.minecraft.inventory.IInventory;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.monster.EntityCreeper;
 import net.minecraft.util.*;
 import net.minecraftforge.client.ClientCommandHandler;
 import net.minecraftforge.client.GuiIngameForge;
-import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.event.entity.player.ItemTooltipEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.Mod.EventHandler;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
@@ -25,40 +24,40 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL14;
-
-import static net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.*;
-
-import java.lang.reflect.Method;
-import java.nio.ByteBuffer;
-
-import static net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.CROSSHAIRS;
 
 @Mod(modid = HUDCaching.MODID, version = HUDCaching.VERSION, clientSideOnly = true)
 public class HUDCaching {
     public static final String MODID = "hudcaching";
     public static final String VERSION = "1.7-REL";
 
-    public static Framebuffer framebuffer = null;
+    private static Framebuffer framebufferMain = null;
+    private static Framebuffer framebufferSecond = null;
+    private static boolean usingMain;
     public static boolean renderingCacheOverride = false;
 
     @EventHandler
     public void preinit(FMLPreInitializationEvent event) {
         MinecraftForge.EVENT_BUS.register(this);
+        MinecraftForge.EVENT_BUS.register(EntityCulling.getInstance());
     }
 
-    //1000 (default) renders every tick
-    //2000 will render every 2 ticks
-    //2500 will also render every 2 ticks
-    //333 will render (up to) 3 times every tick
-    //100 will render (up to) 10 times every tick
-    //private static int cacheTimeMilliticks = 20000; //CHANGE THIS IN CONFIG
-    //private static int tickCounter = 0;
-    //private static int rendersThisTick = 0;
+    //todo: check framebuffer is main framebuffer when modifying glstatemanager
+
     private static boolean dirty = true;
 
-    public static boolean doOptimization = true; //CHANGE THIS IN CONFIG
-    public static boolean compatibilityMode = false; //MAYBE CHANGE THIS IS CONFIG, NOT SURE IF ITS GOOD OR NOT
+    public static boolean doOptimization = true;
+
+    public static Framebuffer getCurrentBuffer() {
+        return usingMain ? framebufferMain : framebufferSecond;
+    }
+
+    public static void setCurrentBuffer(Framebuffer framebuffer) {
+        if(usingMain) {
+            framebufferMain = framebuffer;
+        } else {
+            framebufferSecond = framebuffer;
+        }
+    }
 
     SimpleCommand hudcachingCommand = new SimpleCommand("hudcaching", new SimpleCommand.ProcessCommandRunnable() {
         @Override
@@ -120,16 +119,10 @@ public class HUDCaching {
             //guiIngame.renderVignette(Minecraft.getMinecraft().thePlayer.getBrightness(partialTicks),
             //        scaledResolution);
 
-            if(framebuffer != null) {
-                framebuffer.bindFramebufferTexture();
-
-                GlStateManager.enableBlend();
-                GlStateManager.tryBlendFuncSeparate(GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA, GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
-                drawTexturedRect(0, 0, (float)widthD, (float)heightD, 0, 1, 1, 0, GL11.GL_NEAREST);
-                GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
-
+            Framebuffer current = getCurrentBuffer();
+            if(current != null) {
                 if(guiIngame instanceof GuiIngameForge) {
-                    ((IGuiIngameForgeListener)guiIngame).renderCrosshairs(width, height);
+                    ((GuiIngameForgeInvoker)guiIngame).invokeRenderCrosshairs(width, height);
                 } else if(guiIngame.showCrosshair()) {
                     Minecraft.getMinecraft().getTextureManager().bindTexture(Gui.icons);
                     GlStateManager.enableBlend();
@@ -138,20 +131,31 @@ public class HUDCaching {
                     drawTexturedModalRect(width/2 - 7, height/2 - 7, 0, 0, 16, 16);
                     GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
                 }
+
+                GlStateManager.enableBlend();
+                GlStateManager.tryBlendFuncSeparate(GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA, GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                GlStateManager.color(1, 1, 1, 1);
+                current.bindFramebufferTexture();
+                drawTexturedRect(0, 0, (float)widthD, (float)heightD, 0, 1, 1, 0, GL11.GL_NEAREST);
+                GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
             }
 
-            if((framebuffer == null || dirty) && !Keyboard.isKeyDown(Keyboard.KEY_P)) {
+            usingMain = !usingMain;
+
+            current = getCurrentBuffer();
+            if(current == null || dirty) {
                 dirty = false;
 
-                framebuffer = checkFramebufferSizes(framebuffer, Minecraft.getMinecraft().displayWidth,
+                current = checkFramebufferSizes(current, Minecraft.getMinecraft().displayWidth,
                         Minecraft.getMinecraft().displayHeight);
-
-                framebuffer.framebufferClear();
-                framebuffer.bindFramebuffer(false);
+                setCurrentBuffer(current);
+                current.framebufferClear();
+                current.bindFramebuffer(false);
 
                 GlStateManager.disableBlend();
                 GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
                         1, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                GlStateManager.color(1, 1, 1, 1);
                 GlStateManager.disableLighting();
                 GlStateManager.disableFog();
 
